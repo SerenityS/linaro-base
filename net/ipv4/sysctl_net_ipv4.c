@@ -29,6 +29,7 @@
 static int zero;
 static int one = 1;
 static int four = 4;
+static int gso_max_segs = GSO_MAX_SEGS;
 static int tcp_retr1_max = 255;
 static int ip_local_port_range_min[] = { 1, 1 };
 static int ip_local_port_range_max[] = { 65535, 65535 };
@@ -137,21 +138,6 @@ static int ipv4_ping_group_range(ctl_table *table, int write,
 		}
 		set_ping_group_range(table, low, high);
 	}
-
-	return ret;
-}
-
-/* Validate changes from /proc interface. */
-static int proc_tcp_default_init_rwnd(ctl_table *ctl, int write,
-				      void __user *buffer,
-				      size_t *lenp, loff_t *ppos)
-{
-	int old_value = *(int *)ctl->data;
-	int ret = proc_dointvec(ctl, write, buffer, lenp, ppos);
-	int new_value = *(int *)ctl->data;
-
-	if (write && ret == 0 && (new_value < 3 || new_value > 100))
-		*(int *)ctl->data = old_value;
 
 	return ret;
 }
@@ -772,11 +758,13 @@ static struct ctl_table ipv4_table[] = {
 		.extra2		= &four,
 	},
 	{
-		.procname       = "tcp_default_init_rwnd",
-		.data           = &sysctl_tcp_default_init_rwnd,
-		.maxlen         = sizeof(int),
-		.mode           = 0644,
-		.proc_handler   = proc_tcp_default_init_rwnd
+		.procname	= "tcp_min_tso_segs",
+		.data		= &sysctl_tcp_min_tso_segs,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &gso_max_segs,
 	},
 	{
 		.procname	= "udp_mem",
