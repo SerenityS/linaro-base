@@ -7748,6 +7748,7 @@ static unsigned int hmp_idle_pull(int this_cpu) { return 0; }
 static void run_rebalance_domains(struct softirq_action *h)
 {
 	struct rq *this_rq = this_rq();
+	int this_cpu = this_rq->cpu;
 	enum cpu_idle_type idle = this_rq->idle_balance ?
 						CPU_IDLE : CPU_NOT_IDLE;
 
