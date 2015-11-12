@@ -30,4 +30,4 @@ config ARM_ZYNQ_CPUIDLE
 	bool "CPU Idle Driver for Xilinx Zynq processors"
 	depends on ARCH_ZYNQ
 	help
-      ............
+

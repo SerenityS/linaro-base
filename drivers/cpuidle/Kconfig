@@ -59,13 +59,9 @@ depends on ARM
 source "drivers/cpuidle/Kconfig.arm"
 endmenu
 
-config CPU_IDLE_CALXEDA
-	bool "CPU Idle Driver for Calxeda processors"
-	depends on ARCH_HIGHBANK
-	help
-	  Select this to enable cpuidle on Calxeda processors.
 endif
 
 config ARCH_NEEDS_CPU_IDLE_COUPLED
 	def_bool n
-	
+
+
