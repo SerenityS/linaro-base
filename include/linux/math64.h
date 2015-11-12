@@ -125,7 +125,7 @@ __iter_div_u64_rem(u64 dividend, u32 divisor, u64 *remainder)
 #ifndef mul_u64_u32_shr
 static inline u64 mul_u64_u32_shr(u64 a, u32 mul, unsigned int shift)
 {
-        return (u64)(((unsigned __int128)a * mul) >> shift);
+	return (u64)(((unsigned __int128)a * mul) >> shift);
 }
 #endif /* mul_u64_u32_shr */
 
@@ -134,17 +134,17 @@ static inline u64 mul_u64_u32_shr(u64 a, u32 mul, unsigned int shift)
 #ifndef mul_u64_u32_shr
 static inline u64 mul_u64_u32_shr(u64 a, u32 mul, unsigned int shift)
 {
-        u32 ah, al;
-        u64 ret;
+	u32 ah, al;
+	u64 ret;
 
-        al = a;
-        ah = a >> 32;
+	al = a;
+	ah = a >> 32;
 
-        ret = ((u64)al * mul) >> shift;
-        if (ah)
-                ret += ((u64)ah * mul) << (32 - shift);
+	ret = ((u64)al * mul) >> shift;
+	if (ah)
+		ret += ((u64)ah * mul) << (32 - shift);
 
-        return ret;
+	return ret;
 }
 #endif /* mul_u64_u32_shr */
 
