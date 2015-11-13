@@ -1582,7 +1582,21 @@ static inline void __update_group_entity_contrib(struct sched_entity *se)
 		se->avg.load_avg_contrib >>= NICE_0_SHIFT;
 	}
 }
-#else
+
+static inline void update_rq_runnable_avg(struct rq *rq, int runnable)
+{
+	int cpu = -1;	/* not used in normal case */
+#ifdef CONFIG_HMP_FREQUENCY_INVARIANT_SCALE
+	cpu = rq->cpu;
+#endif
+	__update_entity_runnable_avg(rq_clock_task(rq), &rq->avg, runnable,
+				     runnable, cpu);
+	__update_tg_runnable_avg(&rq->avg, &rq->cfs);
+	trace_sched_rq_runnable_ratio(cpu_of(rq), rq->avg.load_avg_ratio);
+	trace_sched_rq_runnable_load(cpu_of(rq), rq->cfs.runnable_load_avg);
+}
+#else /* CONFIG_FAIR_GROUP_SCHED */
+
 static inline void __update_cfs_rq_tg_load_contrib(struct cfs_rq *cfs_rq,
 						 int force_update) {}
 static inline void __update_tg_runnable_avg(struct sched_avg *sa,
