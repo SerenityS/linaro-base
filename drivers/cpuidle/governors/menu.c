@@ -307,7 +307,7 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 		data->needs_update = 0;
 	}
 
-	data->last_state_idx = CPUIDLE_DRIVER_STATE_START - 1;
+	data->last_state_idx = 0;
 
 	/* Special case when user has set very strict latency requirement */
 	if (unlikely(latency_req == 0))
@@ -320,11 +320,6 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 
 
 	data->bucket = which_bucket(data->next_timer_us);
-
-#ifdef CONFIG_SKIP_IDLE_CORRELATION
-       if (dev->skip_idle_correlation)
-               data->correction_factor[data->bucket] = RESOLUTION * DECAY;
-#endif
 
 	/*
 	 * if the correction factor is 0 (eg first time init or cpu hotplug
@@ -353,6 +348,15 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 	if(data->predicted_us < MAX_INTERESTING)
 		get_typical_interval(data);
 #endif
+
+	/*
+	 * Performance multiplier defines a minimum predicted idle
+	 * duration / latency ratio. Adjust the latency limit if
+	 * necessary.
+	 */
+	interactivity_req = data->predicted_us / performance_multiplier();
+	if (latency_req > interactivity_req)
+		latency_req = interactivity_req;
 
 	/*
 	 * Performance multiplier defines a minimum predicted idle
