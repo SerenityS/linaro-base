@@ -48,6 +48,9 @@
 #include <asm/mach/arch.h>
 
 #include <linux/sec_debug.h>
+#define CREATE_TRACE_POINTS
+#include <trace/events/ipi.h>
+
 /*
  * as from 2.5, kernels no longer have an init_tasks structure
  * so we need some other way of telling a new secondary core
@@ -55,8 +58,6 @@
  */
 struct secondary_data secondary_data;
 
-#define CREATE_TRACE_POINTS
-#include <trace/events/ipi.h>
 
 /*
  * control for which core is the next to come out of the secondary

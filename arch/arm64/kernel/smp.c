@@ -35,6 +35,7 @@
 #include <linux/clockchips.h>
 #include <linux/completion.h>
 #include <linux/of.h>
+#include <linux/irq_work.h>
 
 #include <asm/atomic.h>
 #include <asm/cacheflush.h>
@@ -47,6 +48,9 @@
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
 #include <asm/ptrace.h>
+
+#define CREATE_TRACE_POINTS
+#include <trace/events/ipi.h>
 
 /*
  * as from 2.5, kernels no longer have an init_tasks structure
@@ -61,6 +65,8 @@ enum ipi_msg_type {
 	IPI_CALL_FUNC,
 	IPI_CALL_FUNC_SINGLE,
 	IPI_CPU_STOP,
+	IPI_TIMER,
+	IPI_IRQ_WORK,
 };
 
 static DEFINE_RAW_SPINLOCK(boot_lock);
@@ -429,36 +435,35 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 	}
 }
 
+static void (*__smp_cross_call)(const struct cpumask *, unsigned int);
 
 void __init set_smp_cross_call(void (*fn)(const struct cpumask *, unsigned int))
 {
-	smp_cross_call = fn;
+	__smp_cross_call = fn;
 }
 
-void arch_send_call_function_ipi_mask(const struct cpumask *mask)
-{
-	smp_cross_call(mask, IPI_CALL_FUNC);
-}
-
-void arch_send_call_function_single_ipi(int cpu)
-{
-	smp_cross_call(cpumask_of(cpu), IPI_CALL_FUNC_SINGLE);
-}
-
-static const char *ipi_types[NR_IPI] = {
-#define S(x,s)	[x - IPI_RESCHEDULE] = s
+static const char *ipi_types[NR_IPI] __tracepoint_string = {
+#define S(x,s)	[x] = s
 	S(IPI_RESCHEDULE, "Rescheduling interrupts"),
 	S(IPI_CALL_FUNC, "Function call interrupts"),
 	S(IPI_CALL_FUNC_SINGLE, "Single function call interrupts"),
 	S(IPI_CPU_STOP, "CPU stop interrupts"),
+	S(IPI_TIMER, "Timer broadcast interrupts"),
+	S(IPI_IRQ_WORK, "IRQ work interrupts"),
 };
+
+static void smp_cross_call(const struct cpumask *target, unsigned int ipinr)
+{
+	trace_ipi_raise(target, ipi_types[ipinr]);
+	__smp_cross_call(target, ipinr);
+}
 
 void show_ipi_list(struct seq_file *p, int prec)
 {
 	unsigned int cpu, i;
 
 	for (i = 0; i < NR_IPI; i++) {
-		seq_printf(p, "%*s%u:%s", prec - 1, "IPI", i + IPI_RESCHEDULE,
+		seq_printf(p, "%*s%u:%s", prec - 1, "IPI", i,
 			   prec >= 4 ? " " : "");
 		for_each_present_cpu(cpu)
 			seq_printf(p, "%10u ",
@@ -477,6 +482,24 @@ u64 smp_irq_stat_cpu(unsigned int cpu)
 
 	return sum;
 }
+
+void arch_send_call_function_ipi_mask(const struct cpumask *mask)
+{
+	smp_cross_call(mask, IPI_CALL_FUNC);
+}
+
+void arch_send_call_function_single_ipi(int cpu)
+{
+	smp_cross_call(cpumask_of(cpu), IPI_CALL_FUNC_SINGLE);
+}
+
+#ifdef CONFIG_IRQ_WORK
+void arch_irq_work_raise(void)
+{
+	if (__smp_cross_call)
+		smp_cross_call(cpumask_of(smp_processor_id()), IPI_IRQ_WORK);
+}
+#endif
 
 static DEFINE_RAW_SPINLOCK(stop_lock);
 
@@ -510,8 +533,10 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 	unsigned int cpu = smp_processor_id();
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
-	if (ipinr >= IPI_RESCHEDULE && ipinr < IPI_RESCHEDULE + NR_IPI)
-		__inc_irq_stat(cpu, ipi_irqs[ipinr - IPI_RESCHEDULE]);
+	if ((unsigned)ipinr < NR_IPI) {
+		trace_ipi_entry(ipi_types[ipinr]);
+		__inc_irq_stat(cpu, ipi_irqs[ipinr]);
+	}
 
 	switch (ipinr) {
 	case IPI_RESCHEDULE:
@@ -536,10 +561,29 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		irq_exit();
 		break;
 
+#ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
+	case IPI_TIMER:
+		irq_enter();
+		tick_receive_broadcast();
+		irq_exit();
+		break;
+#endif
+
+#ifdef CONFIG_IRQ_WORK
+	case IPI_IRQ_WORK:
+		irq_enter();
+		irq_work_run();
+		irq_exit();
+		break;
+#endif
+
 	default:
 		pr_crit("CPU%u: Unknown IPI message 0x%x\n", cpu, ipinr);
 		break;
 	}
+
+	if ((unsigned)ipinr < NR_IPI)
+		trace_ipi_exit(ipi_types[ipinr]);
 	set_irq_regs(old_regs);
 }
 
@@ -547,6 +591,13 @@ void smp_send_reschedule(int cpu)
 {
 	smp_cross_call(cpumask_of(cpu), IPI_RESCHEDULE);
 }
+
+#ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
+void tick_broadcast(const struct cpumask *mask)
+{
+	smp_cross_call(mask, IPI_TIMER);
+}
+#endif
 
 void smp_send_stop(void)
 {
