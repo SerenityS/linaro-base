@@ -152,6 +152,9 @@ static int cpuidle_idle_call(void)
 				entered_state = cpuidle_enter(drv, dev,
 							      next_state);
 
+				/* The cpu is no longer idle or about to enter idle. */
+				idle_set_state(this_rq(), NULL);
+
 				trace_cpu_idle_rcuidle(PWR_EVENT_EXIT,
 						       dev->cpu);
 
@@ -168,6 +171,9 @@ static int cpuidle_idle_call(void)
 			}
 		}
 	}
+
+	/* Take note of the planned idle state. */
+	idle_set_state(this_rq(), &drv->states[next_state]);
 
 	/*
 	 * We can't use the cpuidle framework, let's use the default
