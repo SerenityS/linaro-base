@@ -681,6 +681,7 @@ static u64 sched_vslice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 
 #ifdef CONFIG_SMP
 static inline void __update_task_entity_contrib(struct sched_entity *se);
+static inline void __update_task_entity_utilization(struct sched_entity *se);
 
 /* Give new task start runnable values to heavy its load in infant time */
 void init_task_runnable_average(struct task_struct *p)
@@ -689,9 +690,10 @@ void init_task_runnable_average(struct task_struct *p)
 
 	p->se.avg.decay_count = 0;
 	slice = sched_slice(task_cfs_rq(p), &p->se) >> 10;
-	p->se.avg.runnable_avg_sum = slice;
-	p->se.avg.runnable_avg_period = slice;
+	p->se.avg.runnable_avg_sum = p->se.avg.running_avg_sum = slice;
+	p->se.avg.avg_period = slice;
 	__update_task_entity_contrib(&p->se);
+	__update_task_entity_utilization(&p->se);
 }
 #else
 void init_task_runnable_average(struct task_struct *p)
@@ -1517,7 +1519,7 @@ static u64 numa_get_avg_runtime(struct task_struct *p, u64 *period)
 		*period = now - p->last_task_numa_placement;
 	} else {
 		delta = p->se.avg.runnable_avg_sum;
-		*period = p->se.avg.runnable_avg_period;
+		*period = p->se.avg.avg_period;
 	}
 
 	p->last_sum_exec_runtime = runtime;
@@ -2378,7 +2380,7 @@ static __always_inline int __update_entity_runnable_avg(u64 now,
 #endif /* CONFIG_HMP_FREQUENCY_INVARIANT_SCALE */
 
 	/* delta_w is the amount already accumulated against our next period */
-	delta_w = sa->remainder;
+	delta_w = sa->avg_period % 1024;
 	if (delta + delta_w >= 1024) {
 		/* period roll-over */
 		decayed = 1;
@@ -2403,7 +2405,9 @@ static __always_inline int __update_entity_runnable_avg(u64 now,
 		if (running)
 			sa->usage_avg_sum += delta_w;
 #endif /* #ifdef CONFIG_HMP_FREQUENCY_INVARIANT_SCALE */
-		sa->runnable_avg_period += delta_w;
+		if (running)
+			sa->running_avg_sum += delta_w;
+		sa->avg_period += delta_w;
 
 		delta -= delta_w;
 
@@ -2413,7 +2417,10 @@ static __always_inline int __update_entity_runnable_avg(u64 now,
 		/* decay the load we have accumulated so far */
 		sa->runnable_avg_sum = decay_load(sa->runnable_avg_sum,
 						  periods + 1);
-		sa->runnable_avg_period = decay_load(sa->runnable_avg_period,
+
+		sa->running_avg_sum = decay_load(sa->running_avg_sum,
+						  periods + 1);
+		sa->avg_period = decay_load(sa->avg_period,
 						     periods + 1);
 		sa->usage_avg_sum = decay_load(sa->usage_avg_sum, periods + 1);
 		/* add the contribution from this period */
@@ -2430,17 +2437,10 @@ static __always_inline int __update_entity_runnable_avg(u64 now,
 			sa->runnable_avg_sum += scaled_runnable_contrib;
 		if (running)
 			sa->usage_avg_sum += scaled_runnable_contrib;
-#else
-		if (runnable)
-			sa->runnable_avg_sum += runnable_contrib;
-		if (running)
-			sa->usage_avg_sum += runnable_contrib;
 #endif /* CONFIG_HMP_FREQUENCY_INVARIANT_SCALE */
-		sa->runnable_avg_period += runnable_contrib;
-
-		sa->remainder = delta;
-	} else {
-		sa->remainder += delta;
+		if (running)
+			sa->running_avg_sum += runnable_contrib;
+		sa->avg_period += runnable_contrib;
 	}
 
 	/* Remainder of delta accrued against u_0` */
@@ -2451,13 +2451,10 @@ static __always_inline int __update_entity_runnable_avg(u64 now,
 		sa->runnable_avg_sum += scaled_delta;
 	if (running)
 		sa->usage_avg_sum += scaled_delta;
-#else
-	if (runnable)
-		sa->runnable_avg_sum += delta;
-	if (running)
-		sa->usage_avg_sum += delta;
 #endif /* CONFIG_HMP_FREQUENCY_INVARIANT_SCALE */
-	sa->runnable_avg_period += delta;
+	if (running)
+		sa->running_avg_sum += delta;
+	sa->avg_period += delta;
 
 	return decayed;
 }
@@ -2469,9 +2466,11 @@ static inline u64 __synchronize_entity_decay(struct sched_entity *se)
 	u64 decays = atomic64_read(&cfs_rq->decay_counter);
 
 	decays -= se->avg.decay_count;
+	se->avg.decay_count = 0;
 	if (decays)
 		se->avg.load_avg_contrib = decay_load(se->avg.load_avg_contrib, decays);
-	se->avg.decay_count = 0;
+	se->avg.utilization_avg_contrib =
+		decay_load(se->avg.utilization_avg_contrib, decays);
 	return decays;
 }
 
@@ -2503,11 +2502,11 @@ static inline void __update_tg_runnable_avg(struct sched_avg *sa,
 
 	/* The fraction of a cpu used by this cfs_rq */
 	contrib = div_u64((u64)sa->runnable_avg_sum << NICE_0_SHIFT,
-			  sa->runnable_avg_period + 1);
+			  sa->avg_period + 1);
 	contrib -= cfs_rq->tg_runnable_contrib;
 
 	usage_contrib = div_u64(sa->usage_avg_sum << NICE_0_SHIFT,
-			        sa->runnable_avg_period + 1);
+			        sa->avg_period + 1);
 	usage_contrib -= cfs_rq->tg_usage_contrib;
 
 	/*
@@ -2575,8 +2574,6 @@ static inline void update_rq_runnable_avg(struct rq *rq, int runnable)
 	__update_entity_runnable_avg(rq_clock_task(rq), &rq->avg, runnable,
 				     runnable, cpu);
 	__update_tg_runnable_avg(&rq->avg, &rq->cfs);
-	trace_sched_rq_runnable_ratio(cpu_of(rq), rq->avg.load_avg_ratio);
-	trace_sched_rq_runnable_load(cpu_of(rq), rq->cfs.runnable_load_avg);
 }
 #else /* CONFIG_FAIR_GROUP_SCHED */
 
@@ -2617,25 +2614,24 @@ static inline void __update_task_entity_contrib(struct sched_entity *se)
 
 	/* avoid overflowing a 32-bit type w/ SCHED_LOAD_SCALE */
 	contrib = se->avg.runnable_avg_sum * scale_load_down(se->load.weight);
-	contrib /= (se->avg.runnable_avg_period + 1);
+	contrib /= (se->avg.avg_period + 1);
 	se->avg.load_avg_contrib = scale_load(contrib);
 	trace_sched_task_load_contrib(task_of(se), se->avg.load_avg_contrib);
 	contrib = se->avg.runnable_avg_sum * scale_load_down(NICE_0_LOAD);
-	contrib /= (se->avg.runnable_avg_period + 1);
-	se->avg.load_avg_ratio = scale_load(contrib);
+	contrib /= (se->avg.avg_period + 1);
+	se->avg.load_avg_contrib = scale_load(contrib);
 #ifdef CONFIG_SCHED_HMP
 	if (!hmp_cpu_is_fastest(cpu_of(se->cfs_rq->rq)) &&
-		se->avg.load_avg_ratio > hmp_up_threshold)
+		se->avg.load_avg_contrib > hmp_up_threshold)
 		cpu_rq(smp_processor_id())->next_balance = jiffies;
 #endif
-	trace_sched_task_runnable_ratio(task_of(se), se->avg.load_avg_ratio);
+	trace_sched_task_runnable_ratio(task_of(se), se->avg.load_avg_contrib);
 }
 
 /* Compute the current contribution to load_avg by se, return any delta */
 static long __update_entity_load_avg_contrib(struct sched_entity *se, long *ratio)
 {
 	long old_contrib = se->avg.load_avg_contrib;
-	long old_ratio   = se->avg.load_avg_ratio;
 
 	if (entity_is_task(se)) {
 		__update_task_entity_contrib(se);
@@ -2644,9 +2640,28 @@ static long __update_entity_load_avg_contrib(struct sched_entity *se, long *rati
 		__update_group_entity_contrib(se);
 	}
 
-	if (ratio)
-		*ratio = se->avg.load_avg_ratio - old_ratio;
 	return se->avg.load_avg_contrib - old_contrib;
+}
+
+
+static inline void __update_task_entity_utilization(struct sched_entity *se)
+{
+	u32 contrib;
+
+	/* avoid overflowing a 32-bit type w/ SCHED_LOAD_SCALE */
+	contrib = se->avg.running_avg_sum * scale_load_down(SCHED_LOAD_SCALE);
+	contrib /= (se->avg.avg_period + 1);
+	se->avg.utilization_avg_contrib = scale_load(contrib);
+}
+
+static long __update_entity_utilization_avg_contrib(struct sched_entity *se)
+{
+	long old_contrib = se->avg.utilization_avg_contrib;
+
+	if (entity_is_task(se))
+		__update_task_entity_utilization(se);
+
+	return se->avg.utilization_avg_contrib - old_contrib;
 }
 
 static inline void subtract_blocked_load_contrib(struct cfs_rq *cfs_rq,
@@ -2665,7 +2680,7 @@ static inline void update_entity_load_avg(struct sched_entity *se,
 					  int update_cfs_rq)
 {
 	struct cfs_rq *cfs_rq = cfs_rq_of(se);
-	long contrib_delta, ratio_delta;
+	long contrib_delta, utilization_delta;
 	u64 now;
 	int cpu = -1;   /* not used in normal case */
 
@@ -2685,14 +2700,15 @@ static inline void update_entity_load_avg(struct sched_entity *se,
 			cfs_rq->curr == se, cpu))
 		return;
 
-	contrib_delta = __update_entity_load_avg_contrib(se, &ratio_delta);
+	contrib_delta = __update_entity_load_avg_contrib(se, &utilization_delta);
+	utilization_delta = __update_entity_utilization_avg_contrib(se);
 
 	if (!update_cfs_rq)
 		return;
 
 	if (se->on_rq) {
 		cfs_rq->runnable_load_avg += contrib_delta;
-		rq_of(cfs_rq)->avg.load_avg_ratio += ratio_delta;
+		cfs_rq->utilization_load_avg += utilization_delta;
 	} else {
 		subtract_blocked_load_contrib(cfs_rq, -contrib_delta);
 	}
@@ -2770,7 +2786,7 @@ static inline void enqueue_entity_load_avg(struct cfs_rq *cfs_rq,
 	}
 
 	cfs_rq->runnable_load_avg += se->avg.load_avg_contrib;
-	rq_of(cfs_rq)->avg.load_avg_ratio += se->avg.load_avg_ratio;
+	cfs_rq->utilization_load_avg += se->avg.utilization_avg_contrib;
 
 	/* we force update consideration on load-balancer moves */
 	update_cfs_rq_blocked_load(cfs_rq, !wakeup);
@@ -2790,7 +2806,7 @@ static inline void dequeue_entity_load_avg(struct cfs_rq *cfs_rq,
 	update_cfs_rq_blocked_load(cfs_rq, !sleep);
 
 	cfs_rq->runnable_load_avg -= se->avg.load_avg_contrib;
-	rq_of(cfs_rq)->avg.load_avg_ratio -= se->avg.load_avg_ratio;
+	cfs_rq->utilization_load_avg -= se->avg.utilization_avg_contrib;
 
 	if (sleep) {
 		cfs_rq->blocked_load_avg += se->avg.load_avg_contrib;
@@ -4765,12 +4781,12 @@ static struct sched_entity *_hmp_get_heaviest_task(struct sched_entity* se, cons
 
 	while(num_tasks && se) {
 		if (entity_is_task(se)) {
-			if(se->avg.load_avg_ratio > max_ratio &&
+			if(se->avg.load_avg_contrib > max_ratio &&
 				(hmp_target_mask &&
 					cpumask_intersects(hmp_target_mask,
 							tsk_cpus_allowed(task_of(se))))) {
 				max_se = se;
-				max_ratio = se->avg.load_avg_ratio;
+				max_ratio = se->avg.load_avg_contrib;
 			}
 		}
 		se = __pick_next_entity(se);
@@ -4815,7 +4831,7 @@ static struct sched_entity *hmp_get_heaviest_task(struct sched_entity* se, int m
 
 		for_each_leaf_cfs_rq(cpu_rq(cpu), cfs_rq) {
 			se = _hmp_get_heaviest_task(__pick_first_entity(cfs_rq), hmp_target_mask, &cnt);
-			if(se && se->avg.load_avg_ratio > max_se->avg.load_avg_ratio)
+			if(se && se->avg.load_avg_contrib > max_se->avg.load_avg_contrib)
 				max_se = se;
 		}
 
@@ -4824,10 +4840,10 @@ static struct sched_entity *hmp_get_heaviest_task(struct sched_entity* se, int m
 		if(elapsed_ns > 50000)
 			pr_debug("%s: elapsed time: %lld ns, nr_running:%lu, check_cnt:%d online cpu num:%d\n",
 				__func__ ,elapsed_ns, cpu_rq(cpu)->nr_running, cnt, num_online_cpus());
-		if(start_se->cfs_rq != max_se->cfs_rq && max_se->avg.load_avg_ratio > hmp_up_threshold)
+		if(start_se->cfs_rq != max_se->cfs_rq && max_se->avg.load_avg_contrib > hmp_up_threshold)
 			pr_debug("%s: se: %s ratio: %lu rq_addr: %p, max_se: %s ratio: %lu rq_addr: %p check_cnt: %d elapsed time(ns): %lld\n", __func__,
-				task_of(start_se)->comm, start_se->avg.load_avg_ratio, start_se->cfs_rq,
-				task_of(max_se)->comm, max_se->avg.load_avg_ratio, max_se->cfs_rq, cnt, elapsed_ns);
+				task_of(start_se)->comm, start_se->avg.load_avg_contrib, start_se->cfs_rq,
+				task_of(max_se)->comm, max_se->avg.load_avg_contrib, max_se->cfs_rq, cnt, elapsed_ns);
 	#endif
 
 		return max_se;
@@ -4838,7 +4854,7 @@ static struct sched_entity *hmp_get_heaviest_task(struct sched_entity* se, int m
 {
 	int num_tasks = hmp_max_tasks;
 	struct sched_entity *max_se = se;
-	unsigned long int max_ratio = se->avg.load_avg_ratio;
+	unsigned long int max_ratio = se->avg.load_avg_contrib;
 	const struct cpumask *hmp_target_mask = NULL;
 
 	if (migrate_up) {
@@ -4855,12 +4871,12 @@ static struct sched_entity *hmp_get_heaviest_task(struct sched_entity* se, int m
 
 	while(num_tasks && se) {
 		if (entity_is_task(se)) {
-			if(se->avg.load_avg_ratio > max_ratio &&
+			if(se->avg.load_avg_contrib > max_ratio &&
 					(hmp_target_mask &&
 					 cpumask_intersects(hmp_target_mask,
 						 tsk_cpus_allowed(task_of(se))))) {
 				max_se = se;
-				max_ratio = se->avg.load_avg_ratio;
+				max_ratio = se->avg.load_avg_contrib;
 			}
 		}
 		se = __pick_next_entity(se);
@@ -4890,12 +4906,12 @@ static struct sched_entity *hmp_get_lightest_task(struct sched_entity* se, int m
 
 	while(num_tasks && se) {
 		if (entity_is_task(se)) {
-			if(se->avg.load_avg_ratio < min_ratio &&
+			if(se->avg.load_avg_contrib < min_ratio &&
 					(hmp_target_mask &&
 					 cpumask_intersects(hmp_target_mask,
 						 tsk_cpus_allowed(task_of(se))))) {
 				min_se = se;
-				min_ratio = se->avg.load_avg_ratio;
+				min_ratio = se->avg.load_avg_contrib;
 			}
 		}
 		se = __pick_next_entity(se);
@@ -8415,7 +8431,7 @@ static unsigned int hmp_up_migration(int cpu, int *target_cpu, struct sched_enti
 		else
 			up_threshold = hmp_up_threshold;
 
-		if (se->avg.load_avg_ratio < up_threshold)
+		if (se->avg.load_avg_contrib < up_threshold)
 			return 0;
 	}
 
@@ -8495,7 +8511,7 @@ static unsigned int hmp_down_migration(int cpu, struct sched_entity *se)
 		else
 			down_threshold = hmp_down_threshold;
 
-		if (se->avg.load_avg_ratio < down_threshold)
+		if (se->avg.load_avg_contrib < down_threshold)
 			return 1;
 	}
 	return 0;
