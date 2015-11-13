@@ -2229,9 +2229,9 @@ struct hmp_global_attr {
 };
 
 #ifdef CONFIG_HMP_FREQUENCY_INVARIANT_SCALE
-#define HMP_DATA_SYSFS_MAX 22
+#define HMP_DATA_SYSFS_MAX 17
 #else
-#define HMP_DATA_SYSFS_MAX 21
+#define HMP_DATA_SYSFS_MAX 16
 #endif
 
 struct hmp_data_struct {
