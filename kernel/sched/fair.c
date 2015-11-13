@@ -6804,6 +6804,7 @@ static unsigned long scale_rt_capacity(int cpu)
 {
 	struct rq *rq = cpu_rq(cpu);
 	u64 total, used, age_stamp, avg;
+	s64 delta;
 
 	/*
 	 * Since we're reading these variables without serialization make sure
@@ -6811,9 +6812,12 @@ static unsigned long scale_rt_capacity(int cpu)
 	 */
 	age_stamp = ACCESS_ONCE(rq->age_stamp);
 	avg = ACCESS_ONCE(rq->rt_avg);
-
-	total = sched_avg_period() + (rq->clock - age_stamp);
-
+	delta = __rq_clock_broken(rq) - age_stamp;
+ 
+	if (unlikely(delta < 0))
+		delta = 0;
+ 
+	total = sched_avg_period() + delta;
 	used = div_u64(avg, total);
 
 	if (likely(used < SCHED_CAPACITY_SCALE))
