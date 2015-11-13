@@ -368,6 +368,15 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 		latency_req = interactivity_req;
 
 	/*
+	 * Performance multiplier defines a minimum predicted idle
+	 * duration / latency ratio. Adjust the latency limit if
+	 * necessary.
+	 */
+	interactivity_req = data->predicted_us / performance_multiplier();
+	if (latency_req > interactivity_req)
+		latency_req = interactivity_req;
+
+	/*
 	 * We want to default to C1 (hlt), not to busy polling
 	 * unless the timer is happening really really soon.
 	 */

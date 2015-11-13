@@ -6817,9 +6817,11 @@ int idle_balance(struct rq *this_rq)
 	 * While browsing the domains, we released the rq lock.
 	 * A task could have be enqueued in the meantime
 	 */
-	if (this_rq->nr_running && !pulled_task)
-		return 1;
-
+	if (this_rq->cfs.h_nr_running && !pulled_task) {
+ 		pulled_task = 1;
+ 		goto out;
+ 	}
+ 	
 	if (pulled_task || time_after(jiffies, this_rq->next_balance)) {
 		/*
 		 * We are going idle. next_balance may be set based on
@@ -6830,6 +6832,10 @@ int idle_balance(struct rq *this_rq)
 
 	if (curr_cost > this_rq->max_idle_balance_cost)
 		this_rq->max_idle_balance_cost = curr_cost;
+
+out:
+	if (pulled_task)
+		this_rq->idle_stamp = 0;
 
 	return pulled_task;
 }
