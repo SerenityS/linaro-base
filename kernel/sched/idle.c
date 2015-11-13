@@ -68,11 +68,11 @@ void __weak arch_cpu_idle(void)
  *
  * NOTE: no locks or semaphores should be used here
  */
-static void cpuidle_idle_call(void)
+static int cpuidle_idle_call(void)
 {
 	struct cpuidle_device *dev = __this_cpu_read(cpuidle_devices);
 	struct cpuidle_driver *drv = cpuidle_get_cpu_driver(dev);
-	int next_state, entered_state;
+	int next_state, entered_state, ret;
 	bool broadcast;
 
 	/*
@@ -81,7 +81,7 @@ static void cpuidle_idle_call(void)
 	 */
 	if (need_resched()) {
 		local_irq_enable();
-		return;
+		return 0;
 	}
 
 	/*
@@ -103,74 +103,90 @@ static void cpuidle_idle_call(void)
 	 */
 	next_state = cpuidle_select(drv, dev);
 
-	if (next_state < 0) {
-use_default:
+	ret = next_state;
+	if (ret >= 0) {
 		/*
-		 * We can't use the cpuidle framework, let's use the default
-		 * idle routine.
+		 * The idle task must be scheduled, it is pointless to
+		 * go to idle, just update no idle residency and get
+		 * out of this function
 		 */
-		if (current_clr_polling_and_test())
+		if (current_clr_polling_and_test()) {
+			dev->last_residency = 0;
+			entered_state = next_state;
 			local_irq_enable();
-		else
+		} else {
+			broadcast = !!(drv->states[next_state].flags &
+				       CPUIDLE_FLAG_TIMER_STOP);
+
+			if (broadcast) {
+				/*
+				 * Tell the time framework to switch
+				 * to a broadcast timer because our
+				 * local timer will be shutdown. If a
+				 * local timer is used from another
+				 * cpu as a broadcast timer, this call
+				 * may fail if it is not available
+				 */
+				ret = clockevents_notify(
+					CLOCK_EVT_NOTIFY_BROADCAST_ENTER,
+					&dev->cpu);
+			}
+
+			if (ret >= 0) {
+				trace_cpu_idle_rcuidle(next_state, dev->cpu);
+
+				/*
+				 * Enter the idle state previously
+				 * returned by the governor
+				 * decision. This function will block
+				 * until an interrupt occurs and will
+				 * take care of re-enabling the local
+				 * interrupts
+				 */
+				entered_state = cpuidle_enter(drv, dev,
+							      next_state);
+
+				trace_cpu_idle_rcuidle(PWR_EVENT_EXIT,
+						       dev->cpu);
+
+				if (broadcast)
+					clockevents_notify(
+						CLOCK_EVT_NOTIFY_BROADCAST_EXIT,
+						&dev->cpu);
+
+				/*
+				 * Give the governor an opportunity to reflect on the
+				 * outcome
+				 */
+				cpuidle_reflect(dev, entered_state);
+			}
+		}
+	}
+
+	/*
+	 * We can't use the cpuidle framework, let's use the default
+	 * idle routine
+	 */
+	if (ret) {
+		if (!current_clr_polling_and_test())
 			arch_cpu_idle();
-
-		goto exit_idle;
+		else
+			local_irq_enable();
 	}
 
-	/*
-	 * The idle task must be scheduled, it is pointless to
-	 * go to idle, just update no idle residency and get
-	 * out of this function
-	 */
-	if (current_clr_polling_and_test()) {
-		dev->last_residency = 0;
-		entered_state = next_state;
-		local_irq_enable();
-		goto exit_idle;
-	}
-
-	broadcast = !!(drv->states[next_state].flags & CPUIDLE_FLAG_TIMER_STOP);
-
-	/*
-	 * Tell the time framework to switch to a broadcast timer
-	 * because our local timer will be shutdown. If a local timer
-	 * is used from another cpu as a broadcast timer, this call may
-	 * fail if it is not available
-	 */
-	if (broadcast &&
-	    clockevents_notify(CLOCK_EVT_NOTIFY_BROADCAST_ENTER, &dev->cpu))
-		goto use_default;
-
-	trace_cpu_idle_rcuidle(next_state, dev->cpu);
-
-	/*
-	 * Enter the idle state previously returned by the governor decision.
-	 * This function will block until an interrupt occurs and will take
-	 * care of re-enabling the local interrupts
-	 */
-	entered_state = cpuidle_enter(drv, dev, next_state);
-
-	trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, dev->cpu);
-
-	if (broadcast)
-		clockevents_notify(CLOCK_EVT_NOTIFY_BROADCAST_EXIT, &dev->cpu);
-
-	/*
-	 * Give the governor an opportunity to reflect on the outcome
-	 */
-	cpuidle_reflect(dev, entered_state);
-
-exit_idle:
 	__current_set_polling();
 
 	/*
-	 * It is up to the idle functions to reenable local interrupts
+	 * It is up to the idle functions to enable back the local
+	 * interrupt
 	 */
 	if (WARN_ON_ONCE(irqs_disabled()))
 		local_irq_enable();
 
 	rcu_idle_exit();
 	start_critical_timings();
+
+	return 0;
 }
 
 /*
