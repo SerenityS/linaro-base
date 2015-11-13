@@ -24,6 +24,7 @@ config EXYNOS_IDLE_CLOCK_DOWN
 	help
 	  Enable core idle clock down
 
+menu "CPU Idle"
 menuconfig CPU_IDLE
 	bool "CPU idle PM support"
 	default y if ACPI || PPC_PSERIES
@@ -59,9 +60,18 @@ depends on ARM
 source "drivers/cpuidle/Kconfig.arm"
 endmenu
 
+config CPU_IDLE_BIG_LITTLE
+	bool "Support for ARM big.LITTLE processors"
+	depends on ARCH_VEXPRESS_TC2_PM
+	select ARM_CPU_SUSPEND
+	select CPU_IDLE_MULTIPLE_DRIVERS
+	help
+	  Select this option to enable CPU idle driver for big.LITTLE based
+	  ARM systems. Driver manages CPUs coordination through MCPM and
+	  define different C-states for little and big cores through the
+	  multiple CPU idle drivers infrastructure.
 endif
 
 config ARCH_NEEDS_CPU_IDLE_COUPLED
 	def_bool n
-
-
+endmenu

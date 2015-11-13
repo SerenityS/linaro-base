@@ -1795,13 +1795,6 @@ skip:
 	return ret;
 }
 
-static void pre_schedule_rt(struct rq *rq, struct task_struct *prev)
-{
-	/* Try to pull RT tasks here if we lower this rq's prio */
-	if (rq->rt.highest_prio.curr > prev->prio)
-		pull_rt_task(rq);
-}
-
 static void post_schedule_rt(struct rq *rq)
 {
 	push_rt_tasks(rq);
@@ -2078,7 +2071,6 @@ const struct sched_class rt_sched_class = {
 	.set_cpus_allowed       = set_cpus_allowed_rt,
 	.rq_online              = rq_online_rt,
 	.rq_offline             = rq_offline_rt,
-	.pre_schedule		= pre_schedule_rt,
 	.post_schedule		= post_schedule_rt,
 	.task_woken		= task_woken_rt,
 	.switched_from		= switched_from_rt,
