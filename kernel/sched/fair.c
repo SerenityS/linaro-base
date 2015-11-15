@@ -5936,15 +5936,27 @@ unlock:
 }
 
 /*
- * Called immediately before a task is migrated to a new cpu; task_cpu(p) and
- * cfs_rq_of(p) references at time of call are still valid and identify the
- * previous cpu.  However, the caller only guarantees p->pi_lock is held; no
+ * Load-tracking only depends on SMP, FAIR_GROUP_SCHED dependency below may be
+ * removed when useful for applications beyond shares distribution (e.g.
+ * load-balance).
+ */
+#ifdef CONFIG_FAIR_GROUP_SCHED
+
+#ifdef CONFIG_NO_HZ_COMMON
+static int nohz_test_cpu(int cpu);
+#else
+static inline int nohz_test_cpu(int cpu)
+{
+	return 0;
+}
+#endif
+
+/*
  * Called immediately before a task is migrated to a new cpu; task_cpu(p) and
  * cfs_rq_of(p) references at time of call are still valid and identify the
  * previous cpu.  However, the caller only guarantees p->pi_lock is held; no
  * other assumptions, including the state of rq->lock, should be made.
  */
-static int nohz_test_cpu(int cpu);
 static void
 migrate_task_rq_fair(struct task_struct *p, int next_cpu)
 {
@@ -5982,6 +5994,7 @@ migrate_task_rq_fair(struct task_struct *p, int next_cpu)
 						&cfs_rq->removed_load);
 	}
 }
+#endif
 #endif /* CONFIG_SMP */
 
 static unsigned long
