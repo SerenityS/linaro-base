@@ -1166,6 +1166,11 @@ static int fallbacks[MIGRATE_TYPES][4] = {
 #endif
 };
 
+int *get_migratetype_fallbacks(int mtype)
+{
+	return fallbacks[mtype];
+}
+
 /*
  * Move the free pages in a range to the free lists of the requested type.
  * Note that start_page and end_pages are not aligned on a pageblock
@@ -2900,13 +2905,8 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	bool sync_migration = false;
 	bool deferred_compaction = false;
 	bool contended_compaction = false;
-#if defined(CONFIG_SEC_OOM_KILLER) || defined(CONFIG_OOM_KILLER_TIMEOUT)
-	unsigned long oom_invoke_timeout = jiffies + HZ/4;
-#endif
+	unsigned long start_tick = jiffies;
 
-#ifdef CONFIG_SEC_SLOWPATH
-	unsigned long slowpath_time = jiffies;
-#endif
 	/*
 	 * In the slowpath, we sanity check order to avoid ever trying to
 	 * reclaim >= MAX_ORDER areas which will never succeed. Callers may
@@ -3025,13 +3025,9 @@ rebalance:
 	/*
 	 * If we failed to make any progress reclaiming, then we are
 	 * running out of options and have to consider going OOM
+	 * If we are looping more than 250 ms, go to OOM
 	 */
-#if defined(CONFIG_SEC_OOM_KILLER) || defined(CONFIG_OOM_KILLER_TIMEOUT)
-#define SHOULD_CONSIDER_OOM !did_some_progress || time_after(jiffies, oom_invoke_timeout)
-#else
-#define SHOULD_CONSIDER_OOM !did_some_progress
-#endif
-	if (SHOULD_CONSIDER_OOM) {
+	if (!did_some_progress || time_after(jiffies, start_tick + (HZ/4))) {
 		if ((gfp_mask & __GFP_FS) && !(gfp_mask & __GFP_NORETRY)) {
 			if (oom_killer_disabled)
 				goto nopage;
@@ -3039,17 +3035,11 @@ rebalance:
 			if ((current->flags & PF_DUMPCORE) &&
 			    !(gfp_mask & __GFP_NOFAIL))
 				goto nopage;
-#if defined(CONFIG_SEC_OOM_KILLER) || defined(CONFIG_OOM_KILLER_TIMEOUT)
+
 			if (did_some_progress){
 				pr_info("time's up : calling "
 					"__alloc_pages_may_oom(o:%d, gfp:0x%x)\n", order, gfp_mask);
-
-#if defined(CONFIG_SEC_SLOWPATH)
-				oomk_state |= 0x01;
-#endif
 			}
-
-#endif
 
 			page = __alloc_pages_may_oom(gfp_mask, order,
 					zonelist, high_zoneidx,
@@ -3076,9 +3066,6 @@ rebalance:
 					goto nopage;
 			}
 
-#if defined(CONFIG_SEC_OOM_KILLER) || defined(CONFIG_OOM_KILLER_TIMEOUT)
-			oom_invoke_timeout = jiffies + HZ/4;
-#endif
 			goto restart;
 		}
 	}
