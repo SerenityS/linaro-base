@@ -64,7 +64,7 @@ struct cma_info {
 	bool		isolated;
 };
 
-#ifdef CONFIG_CMA
+#ifdef CONFIG_DMA_CMA
 
 /* Not to allow CMA migration */
 #define CMA_NO_MIGRATION
