@@ -2,6 +2,7 @@
  * zsmalloc memory allocator
  *
  * Copyright (C) 2011  Nitin Gupta
+ * Copyright (C) 2012, 2013 Minchan Kim
  *
  * This code is released using a dual license strategy: BSD/GPL
  * You can choose the license that better fits your requirements.
@@ -14,13 +15,11 @@
 #define _ZS_MALLOC_H_
 
 #include <linux/types.h>
-#include <linux/mm_types.h>
 
 /*
  * zsmalloc mapping modes
  *
- * NOTE: These only make a difference when a mapped object spans pages.
- *       They also have no effect when PGTABLE_MAPPING is selected.
+ * NOTE: These only make a difference when a mapped object spans pages
 */
 enum zs_mapmode {
 	ZS_MM_RW, /* normal read-write mapping */
@@ -41,10 +40,10 @@ struct zs_ops {
 
 struct zs_pool;
 
-struct zs_pool *zs_create_pool(gfp_t flags, struct zs_ops *ops);
+struct zs_pool *zs_create_pool(gfp_t flags);
 void zs_destroy_pool(struct zs_pool *pool);
 
-unsigned long zs_malloc(struct zs_pool *pool, size_t size, gfp_t flags);
+unsigned long zs_malloc(struct zs_pool *pool, size_t size);
 void zs_free(struct zs_pool *pool, unsigned long obj);
 
 void *zs_map_object(struct zs_pool *pool, unsigned long handle,
