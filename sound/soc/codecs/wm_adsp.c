@@ -1997,6 +1997,7 @@ out_async:
 	}
 
 out_fw:
+	regmap_async_complete(regmap);
 	release_firmware(firmware);
 	wm_adsp_buf_free(&buf_list);
 out:
@@ -3167,5 +3168,6 @@ int wm_adsp_stream_avail(const struct wm_adsp *adsp)
 			adsp->capt_buf_size);
 }
 EXPORT_SYMBOL_GPL(wm_adsp_stream_avail);
+EXPORT_SYMBOL_GPL(wm_adsp2_init);
 
 MODULE_LICENSE("GPL v2");
